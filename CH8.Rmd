@@ -1,0 +1,255 @@
+---
+title: "Lecture 10: Gelman Hill Ch 8"
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse) 
+library(arm)
+library(gk)
+library(ggforce)
+library(lindia)
+```
+
+
+## Fake-data simulation
+
+Fake data can be used to validate statistical algorithms (important when you are writing your own..) and to compare properties of estimation procedures.
+
+\vfill
+
+__Confidence Interval??:__ A 95% confidence interval contains the true value with probability 95.
+\vfill
+
+\vfill
+\vfill
+
+How can we verify that the coverage properties of these intervals are reasonable? 
+
+\vfill
+
+```{r}
+set.seed(03032020)
+n <- 100
+x <- runif(n)
+beta <- 1
+sigma <- .1
+lm_data <- tibble(y = rnorm(n, x*beta, sigma), x=x)
+
+lm_data <- lm(y ~ x, data = lm_data)
+display(lm_data)
+confint(lm_data)
+```
+
+\vfill
+Describe a procedure to do this at a larger scale... perhaps with pseudocode.
+\newpage
+
+```{r}
+num_replicates <- 10000
+n <- 100
+beta <- 1
+sigma <- .1
+in_interval <- rep(FALSE, num_replicates)
+conf_width <- rep(0, num_replicates)
+for (i in 1:num_replicates){
+  x <- runif(n)
+  lm_data <- tibble(y = rnorm(n, x*beta, sigma), x=x)
+  lm_data <- lm(y ~ x, data = lm_data)
+  in_interval[i] <- (beta > confint(lm_data)[2,1] ) & (beta < confint(lm_data)[2,2])
+  conf_width[i] <- as.numeric(diff(confint(lm_data)[2,]))
+}
+```
+\vfill
+\vfill
+Based on `r prettyNum(num_replicates,big.mark=",",scientific=FALSE)` samples, the coverage of the interval in this procedure is `r round(mean(in_interval),3)`. Furthermore, the average confidence interval width is `r round(mean(conf_width),3)` 
+
+\vfill
+ Now what happens if the model is not actually what we assumed... One option is to consider a t distribution.
+ 
+ \vfill
+```{r}
+num_replicates <- 10000
+n <- 100
+beta <- 1
+sigma <- .1
+in_interval <- rep(FALSE, num_replicates)
+conf_width <- rep(0, num_replicates)
+deg_free <- 2
+
+for (i in 1:num_replicates){
+  x <- runif(n)
+  lm_data <- tibble(y = rt(n,deg_free) * sigma + x*beta, x=x)
+  lm_data <- lm(y ~ x, data = lm_data)
+  in_interval[i] <- (beta > confint(lm_data)[2,1] ) & (beta < confint(lm_data)[2,2])
+  conf_width[i] <- as.numeric(diff(confint(lm_data)[2,]))
+}
+```
+\vfill
+Based on `r prettyNum(num_replicates,big.mark=",",scientific=FALSE)` samples, the coverage of the interval in this procedure is `r round(mean(in_interval),3)`. Furthermore, the average confidence interval width is `r round(mean(conf_width),3)`. So for this setting with symmetric residuals, the coverage is reasonably good, but notice the confidence intervals are considerably wider due to the larger estimated variance. We will come back to this and look at residual plots.
+\vfill
+
+\newpage
+ 
+```{r}
+x <- runif(n)
+lm_data_comb <- tibble(y = c(rnorm(n, x*beta, sigma),rt(n,deg_free) * sigma + x*beta), 
+                       x=c(x,x), type = rep(c('N','T(2)'), each = n))
+
+lm_data_comb %>% ggplot(aes(y=y, x=x, color = type)) + 
+  geom_point() + geom_smooth(method='lm') + facet_wrap(.~type)
+```
+
+
+
+\vfill
+
+What about a non-symmetic distribution? Consider the Tukey g-and-h distribution [https://rss.onlinelibrary.wiley.com/doi/10.1111/j.1740-9713.2019.01273.x](https://rss.onlinelibrary.wiley.com/doi/10.1111/j.1740-9713.2019.01273.x). The Gaussian distribution is a special case of the g-and-h distribution (when g=h=0); otherwise, the distribution can capture skewed behavior.
+\vfill
+```{r}
+num_sims = 10000
+sims <- tibble(val = c(rgh(num_sims,A = 0, B = 1, g = 0, h = 0),
+               rgh(num_sims,A = 0, B = 1, g = 0, h = .5),
+               rgh(num_sims,A = 0, B = 1, g = .5, h = 0),
+               rgh(num_sims,A = 0, B = 1, g = .5, h = .1)),
+       type = rep(c('G = 0, H = 0', 'G = 0, H = .5','G = .5, H = 0', 'G = .5, H = .1' ), each = num_sims))
+```
+
+\newpage
+
+```{r, fig.height = 10, fig.width = 8, echo = F, warning=F}
+sims %>% ggplot(aes(x=val, color = type)) + geom_histogram(bins = 150) + facet_wrap(type~., ncol=1, nrow = 4) + xlim(-10,10) + ggtitle('Note some points are truncated with the x-axis limit')
+```
+
+\newpage
+
+### Model Checking
+
+Recall: GH list the assumption in descreasing order of importance. 
+
+1. __Validity:__ "Most importantly, the data you are analyzing should map to the research question you are trying to answer... Optimally, this means that the outcome measure should accurately reflect the phenomenon of interest, the model should include all relevant predictors, and the model should generalize to the cases to which it will be applied to.
+Data used in empirical research rarely meet all (if any) of these criteria precisely. However, keeping these goals in mind can help you be precise about the types of questions you can _and cannot_ answer.
+\vfill
+
+2. __Additivity and linearity:__ "the most important mathematical assumption of the regression model is that its deterministic component is a linear function of the separate predictors: $y = \beta_1 x_1 + \beta_2 x_2 +...$
+If additivity is violated, it might make sense to transform the data or to add interactions. If linearity is violated, perhaps a predictor should be transformed or included in as a basis function."
+\vfill
+
+3. __Independence of errors:__ The simple regression model assumes the errors from the prediction line are independent... more later with multilevel models.
+
+\vfill
+4. __Equal variance of errors:__ If the variance of the regression errors are unequal, estimation is more efficiently performed using weighted least squares. However, unequal variance does not affect the predictor $X\underline{\beta}$.
+\vfill
+
+5. __Normality of errors:__ "The regression assumption that is generally _least_ important is that the errors are normally distributed. GH do _not_ recommend diagnostics of the normality of the regression residuals.
+\vfill
+We will continue using simulation to evaluate these assumptions.
+\vfill
+\newpage
+
+#### Additivity and Linearity
+
+Consider the following relationship between x and y...
+
+```{r, echo = F}
+n <- 100
+x_sqrt <- runif(n, min = 1, max = 10)
+x <- x_sqrt^2
+beta <- 2
+sigma <- 1
+lm_data <- tibble(y = rnorm(n, x_sqrt*beta, sigma), x=x)
+
+lm_data %>% ggplot(aes(y = y, x=x)) + geom_point() + geom_smooth(method = 'lm') 
+
+lm_fit <- lm(y ~ x, data = lm_data)
+display(lm_fit)
+```
+
+\newpage
+
+```{r, echo = F}
+tibble(resids = lm_fit$residuals, x = x) %>% ggplot(aes(y=resids, x=x)) + geom_point() + geom_smooth(method = 'loess') + ggtitle('Residuals vs. X') + geom_hline(yintercept = 0, lty = 3, col = 'red')
+
+tibble(resids = lm_fit$residuals, fits = lm_fit$fitted.values) %>% ggplot(aes(y=resids, x=fits)) + geom_point() + geom_smooth(method = 'loess') + ggtitle('Residuals vs. Fitted Values') + geom_hline(yintercept = 0, lty = 3, col = 'red')
+```
+
+\newpage
+
+Some of these figures are built into regression diagnostics, such as `gg_diagnose` in `lindia`.
+```{r, fig.height= 8}
+gg_diagnose(lm_fit)
+```
+
+\newpage
+
+Now consider fitting the appropriate model..
+
+```{r, fig.height= 6, message = F}
+lm_fit2 <- lm(y ~ x_sqrt, data = lm_data)
+display(lm_fit2)
+gg_diagnose(lm_fit2)
+```
+
+\newpage
+ 
+#### Equal Variance
+ 
+```{r}
+n <- 100
+x <- runif(n)
+beta <- 1
+sigma <- .1
+w <- 1/x
+lm_var <- tibble(y = rnorm(n, x*beta, sigma / w), x=x)
+lm_var %>% ggplot(aes(y = y, x=x)) + geom_point()
+```
+
+```{r, echo = F}
+lm_varmod <- lm(y ~ x, data = lm_var)
+tibble(resids =lm_varmod$residuals, fits = lm_varmod$fitted.values) %>% ggplot(aes(y=resids, x=fits)) + geom_point() + geom_smooth(method = 'loess') + ggtitle('Residuals vs. Fitted Values') + geom_hline(yintercept = 0, lty = 3, col = 'red')
+```
+
+\vfill
+
+\vfill
+\vfill
+
+```{r}
+lm_wls <- lm(y ~ x, data = lm_var, weights = w)
+display(lm_wls)
+display(lm_varmod)
+```
+
+
+
+\newpage
+
+#### Normality of Errors
+```{r, echo = F, fig.height=4}
+n <- 5000
+x <- runif(n)
+beta <- 1
+sigma <- .1
+deg_free <- 3
+lm_t_data <- tibble(y = rt(n,deg_free) * sigma + x*beta, x=x)
+lm_t <- lm(y ~ x, data = lm_t_data)
+tibble(resids = lm_t$residuals) %>% ggplot(aes(sample=resids)) + stat_qq() + stat_qq_line() +  theme_bw() + ggtitle('QQ plot for t(3) data')
+```
+
+```{r, echo = F, fig.height = 4}
+x <- runif(n)
+beta <- 1
+sigma <- .1
+deg_free <- 2
+lm_data <- tibble(y = rnorm(n) * sigma + x*beta, x=x)
+lm_data <- lm(y ~ x, data = lm_data)
+tibble(resids = lm_data$residuals) %>% ggplot(aes(sample=resids)) + stat_qq() + stat_qq_line() +  theme_bw() + ggtitle('QQ plot for Normal data')
+```
+
+We previously saw that the impact on the coverage of the confidence interval was fairly minor. I think this is why GH put normality as the lowest priority for checking assumptions, HOWEVER... 
+\vfill
+
+GH also present model simulation, we will return to this after studying GLMs.
+
